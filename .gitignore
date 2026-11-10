@@ -1,0 +1,32 @@
+.env
+data/
+models/embedding/*
+models/reranker/*
+models/llm/*
+models/ocr/*
+!models/*/README.md
+offline/images/
+offline/wheels/
+offline/models/
+.tools-venv/
+__pycache__/
+*.pyc
+node_modules/
+frontend/dist/
+*.log
+.DS_Store
+
+# 虚拟环境
+.venv/
+venv/
+backend/.venv/
+
+# 大模型权重安全网（即便被误放入其它目录也不提交）
+*.gguf
+*.safetensors
+*.pth
+*.ckpt
+
+# 编辑器
+.idea/
+.vscode/
