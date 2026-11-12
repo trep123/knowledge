@@ -65,11 +65,10 @@ def process_document(self, document_id: str, task_id: str) -> dict:
         )
         _update_progress(task_uuid, 45)
 
-        # 3. 确保向量集合存在（KB 创建时的集合可能缺失），再清理旧数据（重新处理场景）
+        # 3. 确保向量集合存在（KB 创建时的集合可能缺失）。
+        #    旧版本的向量与切片先保留，新版本全部写入成功后再替换，处理失败时文档仍可检索。
         collection_manager.create_collection(kb.id, kb.embedding_dimension)
-        collection_manager.delete_document_points(kb.id, document.id)
-        db.query(DocumentChunk).filter(DocumentChunk.document_id == document.id).delete()
-        db.commit()
+        collection_manager.delete_document_version_points(kb.id, document.id, document.version)
 
         # 4. Embedding（批量）
         contents = [c for _, c in chunks]
@@ -121,8 +120,15 @@ def process_document(self, document_id: str, task_id: str) -> dict:
         client = collection_manager.get_qdrant()
         collection = collection_manager.collection_name(kb.id)
         upsert_batch = 256
-        for i in range(0, len(points), upsert_batch):
-            client.upsert(collection_name=collection, points=points[i : i + upsert_batch])
+        try:
+            for i in range(0, len(points), upsert_batch):
+                client.upsert(collection_name=collection, points=points[i : i + upsert_batch])
+        except Exception:
+            # 清掉本次写入了一半的新向量，保留旧版本
+            client.delete(collection_name=collection, points_selector=[p.id for p in points])
+            raise
+        # 新旧切片在同一事务内替换
+        db.query(DocumentChunk).filter(DocumentChunk.document_id == document.id).delete()
         db.add_all(chunk_rows)
 
         document.status = "ready"
@@ -133,6 +139,8 @@ def process_document(self, document_id: str, task_id: str) -> dict:
         task.progress = 100
         task.finished_at = datetime.now(timezone.utc)
         db.commit()
+        # 提交成功后再删除旧版本向量
+        collection_manager.delete_document_points(kb.id, document.id, keep_version=document.version)
         return {"status": "completed", "chunks": len(chunk_rows)}
     except Exception as exc:  # noqa: BLE001
         db.rollback()

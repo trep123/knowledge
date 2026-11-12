@@ -104,19 +104,30 @@ def save_and_enqueue(
     return document, "created"
 
 
-def delete_document(db: Session, document: Document) -> None:
+def remove_document_artifacts(kb_id: uuid.UUID | None, document_id: uuid.UUID, file_path: str | None) -> None:
+    """删除文档的向量与文件。在数据库提交成功之后调用，失败只会留下可清理的残留，不会丢记录。"""
     from app.vector import collection_manager
 
-    kb = db.get(KnowledgeBase, document.knowledge_base_id)
-    if kb:
-        collection_manager.delete_document_points(kb.id, document.id)
-    file_path = Path(document.file_path)
-    if file_path.exists():
-        file_path.unlink()
-    extracted = Path(settings.data_dir) / "extracted" / f"{document.id}.txt"
+    if kb_id is not None:
+        collection_manager.delete_document_points(kb_id, document_id)
+    if file_path:
+        path = Path(file_path)
+        path.unlink(missing_ok=True)
+        try:
+            path.parent.rmdir()  # documents/<collection>/<doc_id>/ 目录为空时一并删除
+        except OSError:
+            pass
+    extracted = Path(settings.data_dir) / "extracted" / f"{document_id}.txt"
     extracted.unlink(missing_ok=True)
+
+
+def delete_document(db: Session, document: Document, commit: bool = True) -> None:
+    """删除文档。commit=False 时由调用方统一提交，并在提交后自行调用 remove_document_artifacts。"""
+    kb_id, doc_id, file_path = document.knowledge_base_id, document.id, document.file_path
     db.delete(document)
-    db.commit()
+    if commit:
+        db.commit()
+        remove_document_artifacts(kb_id, doc_id, file_path)
 
 
 def reprocess_document(db: Session, document: Document) -> Task:

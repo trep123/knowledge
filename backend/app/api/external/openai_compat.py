@@ -88,7 +88,6 @@ async def chat_completions(req: OpenAIChatRequest, request: Request, principal=D
 
     if req.stream:
         async def event_stream():
-            first = True
             async for evt in rag_service.answer_stream(kbs, query, top_k=req.top_k, rerank=req.rerank, history=history):
                 if evt["event"] == "citations":
                     if req.return_citations:
@@ -110,7 +109,9 @@ async def chat_completions(req: OpenAIChatRequest, request: Request, principal=D
                         "choices": [{"index": 0, "delta": {"content": evt["content"]}, "finish_reason": None}],
                     }
                     yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                    first = False
+                elif evt["event"] == "error":
+                    err = {"error": {"message": evt["message"], "type": "server_error", "code": "rag_failed"}}
+                    yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
                 elif evt["event"] == "done":
                     chunk = {
                         "id": completion_id,

@@ -91,6 +91,14 @@ export default function Chat() {
                 next[next.length - 1] = { ...last, content: last.content + evt.content };
                 return next;
               });
+            } else if (evt.event === "error") {
+              setMessages((prev) => {
+                const next = [...prev];
+                const last = next[next.length - 1];
+                const sep = last.content ? "\n\n" : "";
+                next[next.length - 1] = { ...last, content: `${last.content}${sep}⚠️ ${evt.message}` };
+                return next;
+              });
             } else if (evt.event === "citations") {
               setMessages((prev) => {
                 const next = [...prev];

@@ -8,13 +8,25 @@ from app.api import auth, chat, documents, knowledge_bases, retrieval, tasks
 from app.api.admin import api_keys, api_usage, users
 from app.api.external import openai_compat
 from app.config import settings
-from app.dependencies import get_principal
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.dependencies import authorized_kb_id_set, get_principal
 from app.middleware import ApiUsageLogMiddleware
+
+if settings.app_env == "production" and (weak := settings.insecure_settings()):
+    raise RuntimeError(
+        f"生产环境拒绝启动：{', '.join(weak)} 仍为默认值或过短（至少 16 位），请在 .env 中设置随机值"
+        "（openssl rand -hex 32）"
+    )
 
 app = FastAPI(
     title="Local Knowledge Base Platform",
     version="1.0.0",
     description="本地私有化知识库平台：REST API + OpenAI Compatible API",
+    docs_url="/docs" if settings.api_docs_enabled else None,
+    redoc_url="/redoc" if settings.api_docs_enabled else None,
+    openapi_url="/openapi.json" if settings.api_docs_enabled else None,
 )
 
 app.add_middleware(
@@ -63,7 +75,7 @@ async def health_dependencies():
             conn.execute(text("SELECT 1"))
         checks["postgres"] = "ok"
     except Exception as exc:
-        checks["postgres"] = f"error: {exc}"
+        checks["postgres"] = f"error: {type(exc).__name__}"
 
     await check("qdrant", f"{settings.qdrant_url}/healthz")
     await check("embedding", f"{settings.embedding_url}/health")
@@ -76,7 +88,7 @@ async def health_dependencies():
         get_redis().ping()
         checks["redis"] = "ok"
     except Exception as exc:
-        checks["redis"] = f"error: {exc}"
+        checks["redis"] = f"error: {type(exc).__name__}"
 
     all_ok = all(v == "ok" for v in checks.values())
     return {"status": "ok" if all_ok else "degraded", "checks": checks}
@@ -99,20 +111,19 @@ async def health_ready():
 
 
 @app.get("/api/v1/stats")
-def stats(principal=Depends(get_principal)):
-    """Dashboard 统计。"""
-    from app.database import SessionLocal
-    from app.models import ApiUsageLog, Document, DocumentChunk, KnowledgeBase
+def stats(principal=Depends(get_principal), db: Session = Depends(get_db)):
+    """Dashboard 统计：只统计当前主体可访问的知识库；调用总数仅管理员可见。"""
+    from app.models import ApiUsageLog, Document, DocumentChunk
 
-    db = SessionLocal()
-    try:
-        return {
-            "knowledge_bases": db.query(KnowledgeBase).count(),
-            "documents": db.query(Document).count(),
-            "documents_ready": db.query(Document).filter(Document.status == "ready").count(),
-            "documents_failed": db.query(Document).filter(Document.status == "failed").count(),
-            "chunks": db.query(DocumentChunk).count(),
-            "api_calls_total": db.query(ApiUsageLog).count(),
-        }
-    finally:
-        db.close()
+    allowed = authorized_kb_id_set(principal, db)
+    docs = db.query(Document).filter(Document.knowledge_base_id.in_(allowed))
+    result = {
+        "knowledge_bases": len(allowed),
+        "documents": docs.count(),
+        "documents_ready": docs.filter(Document.status == "ready").count(),
+        "documents_failed": docs.filter(Document.status == "failed").count(),
+        "chunks": db.query(DocumentChunk).filter(DocumentChunk.knowledge_base_id.in_(allowed)).count(),
+    }
+    if principal.kind == "user" and principal.is_admin:
+        result["api_calls_total"] = db.query(ApiUsageLog).count()
+    return result

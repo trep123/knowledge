@@ -1,7 +1,7 @@
 FROM node:22-alpine AS build
 WORKDIR /build
-COPY package.json ./
-RUN npm install --registry=https://registry.npmmirror.com
+COPY package.json package-lock.json ./
+RUN npm ci --registry=https://registry.npmmirror.com
 COPY . .
 RUN npm run build
 

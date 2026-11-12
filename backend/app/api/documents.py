@@ -17,8 +17,9 @@ from app.services import document_service
 router = APIRouter(tags=["documents"])
 
 
+# 注意：上传处理是同步 IO（写盘、哈希、DB），用普通 def 让 FastAPI 放到线程池，避免阻塞事件循环
 @router.post("/knowledge-bases/{kb_id}/documents", status_code=201)
-async def upload_document(
+def upload_document(
     kb_id: uuid.UUID,
     principal=Depends(get_principal),
     db: Session = Depends(get_db),
@@ -35,7 +36,7 @@ async def upload_document(
 
 
 @router.post("/knowledge-bases/{kb_id}/documents/batch", status_code=201)
-async def upload_documents_batch(
+def upload_documents_batch(
     kb_id: uuid.UUID,
     principal=Depends(get_principal),
     db: Session = Depends(get_db),

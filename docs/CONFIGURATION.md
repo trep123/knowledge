@@ -17,6 +17,15 @@
 
 生成随机密钥：`openssl rand -hex 32`。
 
+`APP_ENV=production` 时，若 `APP_SECRET_KEY` / `JWT_SECRET_KEY` 仍以 `change-this` 开头或短于 16 位，后端会**拒绝启动**。
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `ENABLE_API_DOCS` | 生产环境 `false`，其他 `true` | 是否开放 `/docs`、`/redoc`、`/openapi.json` |
+| `FORWARDED_ALLOW_IPS` | `*` | uvicorn 信任哪些代理的 `X-Forwarded-For`（后端只在容器网络内被 nginx 访问） |
+| `HISTORY_MAX_MESSAGES` | `10` | 问答时最多带入的历史消息条数（仅 user/assistant，system 会被丢弃） |
+| `HISTORY_MAX_CHARS` | `4000` | 历史消息总字符上限 |
+
 ### 数据存储
 
 | 变量 | 默认 | 说明 |
