@@ -10,6 +10,7 @@ _TMP = tempfile.mkdtemp(prefix="kb-test-")
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{_TMP}/test.db")
 os.environ.setdefault("DATA_DIR", _TMP)
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-for-unit-tests-only")
+os.environ.setdefault("APP_SECRET_KEY", "test-app-secret-for-unit-tests-only")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi.testclient import TestClient  # noqa: E402

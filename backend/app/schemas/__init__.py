@@ -3,7 +3,7 @@ from datetime import datetime
 
 import re
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class LoginRequest(BaseModel):
@@ -124,6 +124,12 @@ class KnowledgeBaseCreate(BaseModel):
     chunk_size: int = Field(default=800, ge=100, le=4000)
     chunk_overlap: int = Field(default=120, ge=0, le=1000)
 
+    @model_validator(mode="after")
+    def _overlap_smaller_than_size(self):
+        if self.chunk_overlap >= self.chunk_size:
+            raise ValueError("chunk_overlap 必须小于 chunk_size")
+        return self
+
 
 class KnowledgeBaseUpdate(BaseModel):
     name: str | None = None
@@ -193,7 +199,7 @@ class TaskOut(BaseModel):
 
 class SearchRequest(BaseModel):
     knowledge_base_ids: list[uuid.UUID] | None = None
-    query: str = Field(min_length=1)
+    query: str = Field(min_length=1, max_length=4000)
     top_k: int = Field(default=5, ge=1, le=50)
     rerank: bool = True
     filters: dict | None = None
@@ -217,12 +223,12 @@ class SearchResponse(BaseModel):
 
 class ChatRequest(BaseModel):
     knowledge_base_ids: list[uuid.UUID] | None = None
-    query: str = Field(min_length=1)
+    query: str = Field(min_length=1, max_length=4000)
     top_k: int = Field(default=5, ge=1, le=50)
     rerank: bool = True
     return_citations: bool = True
     stream: bool = False
-    history: list[dict] | None = None
+    history: list[dict] | None = Field(default=None, max_length=100)  # 进一步清洗见 rag.context_builder
 
 
 class ApiKeyCreate(BaseModel):
@@ -242,7 +248,7 @@ class ApiKeyUpdate(BaseModel):
     default_kb_ids: list[uuid.UUID] | None = None
     rate_limit: int | None = Field(default=None, ge=1, le=10000)
     daily_limit: int | None = Field(default=None, ge=1)
-    status: str | None = None
+    status: str | None = Field(default=None, pattern="^(active|disabled)$")
     expires_in_days: int | None = Field(default=None, ge=1, le=3650)
 
 

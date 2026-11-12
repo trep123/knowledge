@@ -2,6 +2,7 @@
 
 REST、OpenAI 兼容 API、Web 问答共用本服务。
 """
+import logging
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
@@ -32,6 +33,10 @@ class Citation:
             "score": round(self.score, 4),
         }
 
+
+logger = logging.getLogger(__name__)
+
+STREAM_ERROR_MESSAGE = "生成回答时出错，请稍后重试；如持续失败请联系管理员查看后端日志。"
 
 INSUFFICIENT_ANSWER = "知识库中未找到足够依据来回答该问题。请补充相关文档后重试。"
 
@@ -81,14 +86,19 @@ async def answer_stream(
     {"event": "citations", "citations": [...]}  检索完成后先发送引用
     {"event": "delta", "content": "..."}         文本增量
     {"event": "done"}                            结束
+    {"event": "error", "message": "..."}         出错（随后仍会发送 done）
     """
-    chunks = await _retrieve(kbs, query, top_k or settings.final_top_k, rerank)
-    if not chunks:
-        yield {"event": "delta", "content": INSUFFICIENT_ANSWER}
-        yield {"event": "done"}
-        return
-    yield {"event": "citations", "citations": [c.to_dict() for c in _citations_from_chunks(chunks)]}
-    messages = build_messages(query, [c.__dict__ for c in chunks], history)
-    async for delta in llm_service.chat_stream(messages):
-        yield {"event": "delta", "content": delta}
+    try:
+        chunks = await _retrieve(kbs, query, top_k or settings.final_top_k, rerank)
+        if not chunks:
+            yield {"event": "delta", "content": INSUFFICIENT_ANSWER}
+            yield {"event": "done"}
+            return
+        yield {"event": "citations", "citations": [c.to_dict() for c in _citations_from_chunks(chunks)]}
+        messages = build_messages(query, [c.__dict__ for c in chunks], history)
+        async for delta in llm_service.chat_stream(messages):
+            yield {"event": "delta", "content": delta}
+    except Exception:  # noqa: BLE001  流已开始，无法再返回 HTTP 错误码，只能以事件告知客户端
+        logger.exception("RAG 流式问答失败")
+        yield {"event": "error", "message": STREAM_ERROR_MESSAGE}
     yield {"event": "done"}
