@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Button, Drawer, List, message, Modal, Popconfirm, Select, Space, Table, Tag, Typography, Upload } from "antd";
 import { UploadOutlined, ReloadOutlined, DeleteOutlined, RedoOutlined } from "@ant-design/icons";
 import client from "../api/client";
+import { useAuth } from "../store/auth";
 
 const statusColor: Record<string, string> = {
   pending: "default",
@@ -11,6 +12,7 @@ const statusColor: Record<string, string> = {
 };
 
 export default function Documents() {
+  const canDelete = useAuth((s) => s.role) === "admin"; // 普通用户角色没有 kb:documents:delete
   const [kbs, setKbs] = useState<any[]>([]);
   const [kbId, setKbId] = useState<string>();
   const [docs, setDocs] = useState<any[]>([]);
@@ -128,9 +130,11 @@ export default function Documents() {
         <Button icon={<RedoOutlined />} disabled={!selected.length} onClick={() => batchAction("reprocess")}>
           批量重处理{selected.length ? `（${selected.length}）` : ""}
         </Button>
-        <Button danger icon={<DeleteOutlined />} disabled={!selected.length} onClick={() => batchAction("delete")}>
-          批量删除{selected.length ? `（${selected.length}）` : ""}
-        </Button>
+        {canDelete && (
+          <Button danger icon={<DeleteOutlined />} disabled={!selected.length} onClick={() => batchAction("delete")}>
+            批量删除{selected.length ? `（${selected.length}）` : ""}
+          </Button>
+        )}
         <Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>
         <Typography.Text type="secondary">支持 PDF / DOCX / MD / TXT / 图片（扫描版自动 OCR）</Typography.Text>
       </Space>
@@ -157,9 +161,11 @@ export default function Documents() {
                 <Button size="small" onClick={async () => { await client.post(`/api/v1/documents/${r.id}/reprocess`); message.success("已重新提交处理"); load(); }}>
                   重处理
                 </Button>
-                <Popconfirm title="删除文档及其向量？" onConfirm={async () => { await client.delete(`/api/v1/documents/${r.id}`); load(); }}>
-                  <Button size="small" danger>删除</Button>
-                </Popconfirm>
+                {canDelete && (
+                  <Popconfirm title="删除文档及其向量？" onConfirm={async () => { await client.delete(`/api/v1/documents/${r.id}`); load(); }}>
+                    <Button size="small" danger>删除</Button>
+                  </Popconfirm>
+                )}
               </Space>
             ),
           },

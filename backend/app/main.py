@@ -5,7 +5,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import auth, chat, documents, knowledge_bases, retrieval, tasks
-from app.api.admin import api_keys, api_usage
+from app.api.admin import api_keys, api_usage, users
 from app.api.external import openai_compat
 from app.config import settings
 from app.dependencies import get_principal
@@ -34,6 +34,7 @@ app.include_router(chat.router, prefix="/api/v1")
 app.include_router(tasks.router, prefix="/api/v1")
 app.include_router(api_keys.router, prefix="/api/v1")
 app.include_router(api_usage.router, prefix="/api/v1")
+app.include_router(users.router, prefix="/api/v1")
 app.include_router(openai_compat.router)
 
 

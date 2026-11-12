@@ -8,11 +8,12 @@ import jwt
 from app.config import settings
 
 
-def create_access_token(user_id: uuid.UUID, username: str, role: str) -> str:
+def create_access_token(user_id: uuid.UUID, username: str, role: str, token_version: int = 0) -> str:
     payload = {
         "sub": str(user_id),
         "username": username,
         "role": role,
+        "ver": token_version,
         "exp": datetime.now(timezone.utc) + timedelta(hours=settings.jwt_expire_hours),
         "type": "access",
     }

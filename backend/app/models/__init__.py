@@ -40,7 +40,12 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(Text)
     email: Mapped[str | None] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(20), default="user")  # admin | user
-    status: Mapped[str] = mapped_column(String(20), default="active")
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active | disabled
+    # 改密 / 重置密码 / 禁用 / 改角色时递增，使已签发的 JWT 立即失效
+    token_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    failed_login_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -63,6 +68,20 @@ class KnowledgeBase(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     documents: Mapped[list["Document"]] = relationship(back_populates="knowledge_base")
+
+
+class KnowledgeBaseMember(Base):
+    """知识库用户授权：非管理员用户只能访问自己拥有或被授权的知识库。"""
+
+    __tablename__ = "knowledge_base_members"
+    __table_args__ = (UniqueConstraint("knowledge_base_id", "user_id", name="uq_kb_member"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    knowledge_base_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Document(Base):
