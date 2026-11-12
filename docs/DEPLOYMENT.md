@@ -120,8 +120,8 @@ Tesla P4 为 Pascal 架构（sm_61）：
 ./deploy/restart.sh
 ./deploy/status.sh
 ./deploy/logs.sh backend       # 跟踪指定服务日志
-./deploy/backup.sh             # 一致性备份到 data/backups/<时间戳>/
-./deploy/restore.sh data/backups/<时间戳>
+./deploy/backup.sh             # 一致性备份到 data/backups/<时间戳>/（目录权限 700，含数据库与 .env 副本）
+./deploy/restore.sh data/backups/<时间戳>   # 先校验 SHA256 并要求输入 yes；不会覆盖当前 .env
 ./deploy/check-models.sh       # 模型 SHA256 校验
 ```
 
