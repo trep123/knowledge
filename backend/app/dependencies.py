@@ -8,10 +8,13 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from sqlalchemy import or_, select
+
 from app.auth.jwt import decode_access_token, hash_api_key
+from app.auth.permissions import scopes_for_role
 from app.config import settings
 from app.database import get_db
-from app.models import ApiKey, ApiKeyKnowledgeBase, KnowledgeBase, User
+from app.models import ApiKey, ApiKeyKnowledgeBase, KnowledgeBase, KnowledgeBaseMember, User
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -36,6 +39,10 @@ class UserPrincipal:
     def is_admin(self) -> bool:
         return self.role == "admin"
 
+    @property
+    def scopes(self) -> list[str]:
+        return scopes_for_role(self.role)
+
 
 @dataclass
 class ApiKeyPrincipal:
@@ -48,6 +55,20 @@ class ApiKeyPrincipal:
     @property
     def is_admin(self) -> bool:
         return "kb:admin" in self.scopes
+
+
+def _aware(dt: datetime) -> datetime:
+    """部分数据库驱动返回不带时区的时间，统一按 UTC 处理。"""
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _user_kb_filter(user_id: uuid.UUID):
+    """非管理员可访问：自己拥有的 + 被授权的知识库。"""
+    granted = KnowledgeBaseMember.__table__.c
+    return or_(
+        KnowledgeBase.owner_id == user_id,
+        KnowledgeBase.id.in_(select(granted.knowledge_base_id).where(granted.user_id == user_id)),
+    )
 
 
 def _check_rate_limit(key_id: uuid.UUID, rate_limit: int, daily_limit: int) -> None:
@@ -79,9 +100,15 @@ def get_principal(
 
     payload = decode_access_token(token)
     if payload and payload.get("type") == "access":
-        user = db.get(User, uuid.UUID(payload["sub"]))
+        try:
+            user = db.get(User, uuid.UUID(payload["sub"]))
+        except (KeyError, ValueError):
+            user = None
         if not user or user.status != "active":
             raise HTTPException(401, "用户不存在或已禁用")
+        if payload.get("ver", 0) != (user.token_version or 0):
+            raise HTTPException(401, "登录已失效，请重新登录")
+        # 角色以数据库为准，不信任 Token 中的 role
         return UserPrincipal(user_id=user.id, username=user.username, role=user.role)
 
     key_hash = hash_api_key(token)
@@ -90,8 +117,11 @@ def get_principal(
         raise HTTPException(401, "无效的凭证")
     if api_key.status != "active":
         raise HTTPException(403, "API Key 已禁用")
-    if api_key.expires_at and api_key.expires_at < datetime.now(timezone.utc):
+    if api_key.expires_at and _aware(api_key.expires_at) < datetime.now(timezone.utc):
         raise HTTPException(403, "API Key 已过期")
+    owner = db.get(User, api_key.user_id)
+    if not owner or owner.status != "active":
+        raise HTTPException(403, "API Key 所属用户已禁用")
 
     _check_rate_limit(api_key.id, api_key.rate_limit, api_key.daily_limit)
 
@@ -125,7 +155,7 @@ def authorized_kb_id_set(principal, db: Session) -> set[uuid.UUID]:
             return set()
         query = query.filter(KnowledgeBase.id.in_(principal.allowed_kb_ids))
     elif not principal.is_admin:
-        query = query.filter(KnowledgeBase.owner_id == principal.user_id)
+        query = query.filter(_user_kb_filter(principal.user_id))
     return {row[0] for row in query.all()}
 
 
@@ -143,7 +173,7 @@ def get_authorized_knowledge_bases(
         query = query.filter(KnowledgeBase.id.in_(principal.allowed_kb_ids))
     else:
         if not principal.is_admin:
-            query = query.filter(KnowledgeBase.owner_id == principal.user_id)
+            query = query.filter(_user_kb_filter(principal.user_id))
 
     if requested_kb_ids:
         query = query.filter(KnowledgeBase.id.in_(requested_kb_ids))

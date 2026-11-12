@@ -1,7 +1,9 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+import re
+
+from pydantic import BaseModel, Field, field_validator
 
 
 class LoginRequest(BaseModel):
@@ -22,7 +24,96 @@ class UserOut(BaseModel):
     email: str | None
     role: str
     status: str
+    last_login_at: datetime | None = None
+    locked_until: datetime | None = None
     created_at: datetime
+    updated_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+USERNAME_PATTERN = r"^[A-Za-z0-9_.\-]{3,50}$"
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _check_password(value: str) -> str:
+    if len(value) < 8 or len(value) > 128:
+        raise ValueError("密码长度需为 8-128 位")
+    if not re.search(r"[A-Za-z]", value) or not re.search(r"\d", value):
+        raise ValueError("密码需同时包含字母和数字")
+    return value
+
+
+def _check_email(value: str | None) -> str | None:
+    if value is None or value == "":
+        return None
+    if len(value) > 255 or not EMAIL_PATTERN.match(value):
+        raise ValueError("邮箱格式不正确")
+    return value
+
+
+class UserCreate(BaseModel):
+    username: str = Field(pattern=USERNAME_PATTERN, description="3-50 位字母、数字、_ . -")
+    password: str
+    email: str | None = None
+    role: str = "user"
+
+    @field_validator("password")
+    @classmethod
+    def _validate_password(cls, v: str) -> str:
+        return _check_password(v)
+
+    @field_validator("email")
+    @classmethod
+    def _validate_email(cls, v: str | None) -> str | None:
+        return _check_email(v)
+
+
+class UserUpdate(BaseModel):
+    email: str | None = None
+    role: str | None = None
+    status: str | None = None
+
+    @field_validator("email")
+    @classmethod
+    def _validate_email(cls, v: str | None) -> str | None:
+        return _check_email(v)
+
+
+class PasswordReset(BaseModel):
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def _validate_new_password(cls, v: str) -> str:
+        return _check_password(v)
+
+
+class PasswordChange(BaseModel):
+    old_password: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def _validate_new_password(cls, v: str) -> str:
+        return _check_password(v)
+
+
+class UserListOut(BaseModel):
+    total: int
+    items: list[UserOut]
+
+
+class KnowledgeBaseMembersUpdate(BaseModel):
+    user_ids: list[uuid.UUID] = Field(default_factory=list, max_length=1000)
+
+
+class MemberOut(BaseModel):
+    id: uuid.UUID
+    username: str
+    email: str | None
+    role: str
+    status: str
 
     model_config = {"from_attributes": True}
 

@@ -12,12 +12,14 @@ from app.dependencies import (
     get_authorized_knowledge_bases,
     get_principal,
 )
-from app.models import Document, KnowledgeBase
+from app.models import Document, KnowledgeBase, KnowledgeBaseMember, User
 from app.schemas import (
     BatchIdsRequest,
     KnowledgeBaseCreate,
+    KnowledgeBaseMembersUpdate,
     KnowledgeBaseOut,
     KnowledgeBaseUpdate,
+    MemberOut,
 )
 from app.vector import collection_manager
 
@@ -44,7 +46,15 @@ def list_knowledge_bases(
     principal=Depends(get_principal), db: Session = Depends(get_db)
 ):
     require_scope(principal, "kb:read")
-    kbs = get_authorized_knowledge_bases(principal, None, db)
+    allowed = authorized_kb_id_set(principal, db)
+    if not allowed:
+        return []  # 新用户尚未被授权任何知识库时返回空列表，而不是报错
+    kbs = (
+        db.query(KnowledgeBase)
+        .filter(KnowledgeBase.id.in_(allowed))
+        .order_by(KnowledgeBase.created_at.desc())
+        .all()
+    )
     return _with_count(db, kbs)
 
 
@@ -97,6 +107,53 @@ def update_knowledge_base(
     return _with_count(db, [kb])[0]
 
 
+def _get_manageable_kb(kb_id: uuid.UUID, principal, db: Session) -> KnowledgeBase:
+    """知识库授权只能由管理员或知识库所有者（Web 用户）操作。"""
+    if principal.kind != "user":
+        raise HTTPException(403, "知识库授权仅支持 Web 用户操作")
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb or kb.status != "active":
+        raise HTTPException(404, "知识库不存在")
+    if not principal.is_admin and kb.owner_id != principal.user_id:
+        raise HTTPException(403, "仅管理员或知识库所有者可设置授权")
+    return kb
+
+
+@router.get("/{kb_id}/members")
+def list_members(kb_id: uuid.UUID, principal=Depends(get_principal), db: Session = Depends(get_db)):
+    kb = _get_manageable_kb(kb_id, principal, db)
+    users = (
+        db.query(User)
+        .join(KnowledgeBaseMember, KnowledgeBaseMember.user_id == User.id)
+        .filter(KnowledgeBaseMember.knowledge_base_id == kb.id)
+        .order_by(User.username)
+        .all()
+    )
+    return [MemberOut.model_validate(u).model_dump() for u in users]
+
+
+@router.put("/{kb_id}/members")
+def set_members(
+    kb_id: uuid.UUID,
+    req: KnowledgeBaseMembersUpdate,
+    principal=Depends(get_principal),
+    db: Session = Depends(get_db),
+):
+    """整体替换知识库的授权用户列表（所有者无需授权，自动拥有访问权）。"""
+    kb = _get_manageable_kb(kb_id, principal, db)
+    wanted = {uid for uid in req.user_ids if uid != kb.owner_id}
+    if wanted:
+        found = {row[0] for row in db.query(User.id).filter(User.id.in_(wanted)).all()}
+        missing = [str(u) for u in wanted - found]
+        if missing:
+            raise HTTPException(400, f"用户不存在: {missing}")
+    db.query(KnowledgeBaseMember).filter(KnowledgeBaseMember.knowledge_base_id == kb.id).delete()
+    for uid in wanted:
+        db.add(KnowledgeBaseMember(knowledge_base_id=kb.id, user_id=uid))
+    db.commit()
+    return list_members(kb_id, principal, db)
+
+
 def _delete_kb(db: Session, kb: KnowledgeBase) -> None:
     """删除知识库：向量集合 + 全部文档（含文件）+ 记录本身。调用方负责 commit。"""
     from app.services.document_service import delete_document
@@ -104,6 +161,7 @@ def _delete_kb(db: Session, kb: KnowledgeBase) -> None:
     collection_manager.delete_collection(kb.id)
     for doc in list(kb.documents):
         delete_document(db, doc)
+    db.query(KnowledgeBaseMember).filter(KnowledgeBaseMember.knowledge_base_id == kb.id).delete()
     kb.status = "deleted"
     db.delete(kb)
 

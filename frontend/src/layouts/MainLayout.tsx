@@ -9,9 +9,13 @@ import {
   BarChartOutlined,
   UserOutlined,
   LogoutOutlined,
+  TeamOutlined,
+  LockOutlined,
 } from "@ant-design/icons";
+import { useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../store/auth";
+import ChangePasswordModal from "../components/ChangePasswordModal";
 
 const { Header, Sider, Content } = Layout;
 
@@ -21,14 +25,19 @@ const menuItems = [
   { key: "/documents", icon: <FileTextOutlined />, label: "文档管理" },
   { key: "/retrieval", icon: <SearchOutlined />, label: "检索测试" },
   { key: "/chat", icon: <MessageOutlined />, label: "智能问答" },
-  { key: "/api-keys", icon: <KeyOutlined />, label: "API Key 管理" },
-  { key: "/api-usage", icon: <BarChartOutlined />, label: "API 调用统计" },
+  { key: "/users", icon: <TeamOutlined />, label: "用户管理", adminOnly: true },
+  { key: "/api-keys", icon: <KeyOutlined />, label: "API Key 管理", adminOnly: true },
+  { key: "/api-usage", icon: <BarChartOutlined />, label: "API 调用统计", adminOnly: true },
 ];
 
 export default function MainLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { username, role, logout } = useAuth();
+  const [pwdOpen, setPwdOpen] = useState(false);
+  const visibleItems = menuItems
+    .filter((m) => !m.adminOnly || role === "admin")
+    .map(({ adminOnly, ...m }) => m);
 
   return (
     <Layout style={{ minHeight: "100vh" }}>
@@ -40,7 +49,7 @@ export default function MainLayout() {
           theme="dark"
           mode="inline"
           selectedKeys={[location.pathname]}
-          items={menuItems}
+          items={visibleItems}
           onClick={(e) => navigate(e.key)}
         />
       </Sider>
@@ -49,6 +58,12 @@ export default function MainLayout() {
           <Dropdown
             menu={{
               items: [
+                {
+                  key: "password",
+                  icon: <LockOutlined />,
+                  label: "修改密码",
+                  onClick: () => setPwdOpen(true),
+                },
                 {
                   key: "logout",
                   icon: <LogoutOutlined />,
@@ -64,7 +79,7 @@ export default function MainLayout() {
             <Space style={{ cursor: "pointer" }}>
               <Avatar icon={<UserOutlined />} />
               <Typography.Text>
-                {username} ({role})
+                {username}（{role === "admin" ? "管理员" : "普通用户"}）
               </Typography.Text>
             </Space>
           </Dropdown>
@@ -72,6 +87,7 @@ export default function MainLayout() {
         <Content style={{ margin: 16, padding: 24, background: "#fff", borderRadius: 8, overflow: "auto" }}>
           <Outlet />
         </Content>
+        <ChangePasswordModal open={pwdOpen} onClose={() => setPwdOpen(false)} />
       </Layout>
     </Layout>
   );

@@ -51,7 +51,14 @@ curl -X POST http://<IP>:8080/api/v1/auth/login \
 | `kb:documents:delete` | 删除文档 |
 | `kb:admin` | 管理（建库/删库/API Key 管理），视为全部权限超集 |
 
-Web 用户（JWT）默认拥有全部权限；API Key 按创建时勾选的 scope 校验，缺少则 `403`。
+Web 用户（JWT）按角色校验：
+
+| 角色 | 权限范围 | 可访问的知识库 |
+|------|----------|----------------|
+| `admin` 管理员 | 全部（含 `kb:admin`） | 全部 |
+| `user` 普通用户 | `kb:read` `kb:search` `kb:chat` `kb:documents:read` `kb:documents:upload` | 自己拥有的 + 被授权的 |
+
+API Key 按创建时勾选的 scope 校验，缺少则 `403`；API Key 所属用户被禁用后该 Key 同时失效。
 
 ## 3. 健康检查
 
@@ -65,8 +72,11 @@ Web 用户（JWT）默认拥有全部权限；API Key 按创建时勾选的 scop
 
 | 方法 | 路径 | Scope | 说明 |
 |------|------|-------|------|
-| POST | `/api/v1/auth/login` | 无 | 登录，返回 JWT |
+| POST | `/api/v1/auth/login` | 无 | 登录，返回 JWT。连续 5 次密码错误锁定 15 分钟（返回 `423`） |
 | GET | `/api/v1/auth/me` | 登录 | 当前用户信息 |
+| PUT | `/api/v1/auth/me/password` | 登录 | 修改自己的密码 `{old_password, new_password}`，返回新 JWT，旧 JWT 全部失效 |
+
+密码规则：8-128 位，同时包含字母和数字。修改/重置密码、禁用账号、修改角色后，该用户已签发的 JWT 立即失效。
 
 ## 5. 知识库
 
@@ -77,6 +87,8 @@ Web 用户（JWT）默认拥有全部权限；API Key 按创建时勾选的 scop
 | GET | `/api/v1/knowledge-bases/{kb_id}` | `kb:read` | 详情 |
 | PUT | `/api/v1/knowledge-bases/{kb_id}` | `kb:admin` | 更新 name/description/chunk_size/chunk_overlap |
 | DELETE | `/api/v1/knowledge-bases/{kb_id}` | `kb:admin` | 删除（含全部文档、向量、文件） |
+| GET | `/api/v1/knowledge-bases/{kb_id}/members` | 管理员或所有者 | 已授权用户列表 |
+| PUT | `/api/v1/knowledge-bases/{kb_id}/members` | 管理员或所有者 | 整体替换授权用户 `{"user_ids": [...]}` |
 
 创建请求体：
 
@@ -295,17 +307,35 @@ print(resp.choices[0].message.content)
 
 其它：`GET /api/v1/stats`（登录）返回平台统计（知识库数、文档数、切片数等）。
 
-## 13. 限流与错误码
+## 13. 管理：用户
+
+仅管理员 JWT 可调用，API Key 一律 `403`。
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/admin/users?q=&role=&status=&skip=0&limit=50` | 列表，返回 `{total, items}`；`q` 模糊匹配用户名/邮箱 |
+| POST | `/api/v1/admin/users` | 创建 `{username, password, email?, role}`，用户名 3-50 位字母数字 `_ . -`，不区分大小写唯一 |
+| GET | `/api/v1/admin/users/{id}` | 详情 |
+| PUT | `/api/v1/admin/users/{id}` | 修改 `email` / `role`（admin\|user）/ `status`（active\|disabled） |
+| POST | `/api/v1/admin/users/{id}/reset-password` | 重置密码 `{new_password}`，同时解锁并使其会话失效 |
+| POST | `/api/v1/admin/users/{id}/unlock` | 解除登录锁定 |
+| DELETE | `/api/v1/admin/users/{id}` | 删除；仍拥有知识库或 API Key 时返回 `409`，可改为禁用 |
+
+保护规则：不能禁用、降级或删除自己；不能移除最后一个可用管理员（`409`）。
+
+## 14. 限流与错误码
 
 限流仅作用于 API Key 请求，用 Redis 维护每分钟桶与每日桶（阈值取 Key 的 `rate_limit`/`daily_limit`）。
 
 | 状态码 | 场景 |
 |--------|------|
 | 400 | 参数错误 / 不支持的文件类型 / 魔数校验失败 / 没有可用知识库 |
-| 401 | 缺少或无效的 Bearer 凭证 / 用户被禁用 |
+| 401 | 缺少或无效的 Bearer 凭证 / 用户被禁用 / 改密等操作后旧 JWT 失效 |
 | 403 | scope 不足 / API Key 禁用或过期 / 无权访问指定知识库 |
 | 404 | 资源不存在 |
+| 409 | 用户名重复 / 不能操作自己或最后一个管理员 / 删除仍有资源的用户 |
 | 413 | 文件超过大小限制 |
+| 423 | 登录失败次数过多，账号临时锁定 |
 | 422 | 请求体校验失败（FastAPI 自动） |
 | 429 | 超出每分钟或每日调用限制 |
 | 500 | 服务端异常 |

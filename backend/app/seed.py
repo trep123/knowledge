@@ -1,4 +1,5 @@
 """初始化角色与管理员账号（幂等）。"""
+from app.auth.permissions import ROLE_SCOPES
 from app.auth.security import hash_password
 from app.config import settings
 from app.database import SessionLocal
@@ -8,12 +9,13 @@ from app.models import Role, User
 def main() -> None:
     db = SessionLocal()
     try:
-        for name, perms in {
-            "admin": ["*"],
-            "user": ["kb:read", "kb:search", "kb:chat", "kb:documents:read", "kb:documents:upload"],
-        }.items():
-            if not db.query(Role).filter(Role.name == name).first():
+        # roles 表与 app.auth.permissions.ROLE_SCOPES 保持一致（权限判断以代码为准）
+        for name, perms in ROLE_SCOPES.items():
+            role = db.query(Role).filter(Role.name == name).first()
+            if not role:
                 db.add(Role(name=name, permissions={"scopes": perms}))
+            elif (role.permissions or {}).get("scopes") != perms:
+                role.permissions = {"scopes": perms}
 
         if settings.admin_password:
             admin = db.query(User).filter(User.username == settings.admin_username).first()
