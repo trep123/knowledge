@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 制作离线部署压缩包（含项目代码 + Docker 镜像，不含模型/运行数据）
-# 用法：./deploy/package-offline.sh [输出目录，默认项目上级目录]
+# 用法：./deploy/package-offline.sh [--save] [输出目录，默认项目上级目录]
+#   --save  先按 docker-compose.yml 中的镜像清单执行 docker save（需本机已 build/pull 好全部镜像）
 # 产物：<输出目录>/knowledge-offline-<日期>.tar.zst
 #
 # 说明：
@@ -10,7 +11,11 @@
 #   - 使用 zstd -T0 多核并行压缩。
 set -euo pipefail
 cd "$(dirname "$0")/.."
-ROOT=$(pwd)                 # /kvm/knowledge
+ROOT=$(pwd)                 # 如 /kvm/knowledge
+# shellcheck source=deploy/lib-images.sh
+. "$ROOT/deploy/lib-images.sh"
+SAVE=0
+if [ "${1:-}" = "--save" ]; then SAVE=1; shift; fi
 PARENT=$(dirname "$ROOT")   # /kvm
 BASE=$(basename "$ROOT")    # knowledge
 OUT_DIR="${1:-$PARENT}"
@@ -22,9 +27,25 @@ err()  { echo -e "\033[31m[FAIL]\033[0m $1" >&2; }
 
 command -v zstd >/dev/null 2>&1 || { err "未安装 zstd（apt install zstd）"; exit 1; }
 
-# 1. 确保镜像已 save 到 offline/images/
-if ! ls "$ROOT/offline/images/"*.tar >/dev/null 2>&1; then
-    err "offline/images/ 中没有镜像 tar，请先执行 docker save（见脚本末尾注释）"
+# 1. 确保镜像已 save 到 offline/images/（每个镜像一个 tar）
+IMAGES_DIR="$ROOT/offline/images"
+mapfile -t IMAGES < <(compose_images "$ROOT/docker-compose.yml")
+tar_name() { echo "$1" | tr '/:' '__'; }
+if [ "$SAVE" -eq 1 ]; then
+    mkdir -p "$IMAGES_DIR"
+    for img in "${IMAGES[@]}"; do
+        docker image inspect "$img" >/dev/null 2>&1 \
+            || { err "本机没有镜像 $img，请先 docker compose build && docker compose pull"; exit 1; }
+        info "docker save $img"
+        docker save -o "$IMAGES_DIR/$(tar_name "$img").tar" "$img"
+    done
+fi
+MISSING=0
+for img in "${IMAGES[@]}"; do
+    [ -f "$IMAGES_DIR/$(tar_name "$img").tar" ] || { err "缺少镜像包：$img（offline/images/$(tar_name "$img").tar）"; MISSING=1; }
+done
+if [ "$MISSING" -eq 1 ]; then
+    err "请加 --save 参数重新执行，自动导出 docker-compose.yml 引用的全部镜像"
     exit 1
 fi
 info "镜像包："

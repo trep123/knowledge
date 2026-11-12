@@ -34,7 +34,7 @@ cp .env.example .env && chmod 600 .env
 
 ```bash
 # 制作离线包（在联网/已 build 的机器上）：
-./deploy/package-offline.sh          # 先 docker save 镜像到 offline/images/，再压成 .tar.zst
+./deploy/package-offline.sh --save   # 按 docker-compose.yml 的镜像清单 docker save 到 offline/images/，再压成 .tar.zst
 
 # 目标机部署：
 zstd -d knowledge-offline-<日期>.tar.zst -o knowledge-offline-<日期>.tar
@@ -44,12 +44,24 @@ cd knowledge
 # 放入模型（离线包不含，必须手动准备）：
 #   models/embedding/bge-m3/、models/reranker/bge-reranker-v2-m3/、models/llm/Qwen3-8B-Q4_K_M.gguf
 
-./deploy/offline-deploy.sh           # 一键：docker load 镜像 → 生成 .env（随机密钥）→ 启动 → 健康检查
+./deploy/offline-deploy.sh           # 一键部署
+# 远程/自动化执行（无交互）：./deploy/offline-deploy.sh -y
+# 跳过模型 SHA256 校验：      ./deploy/offline-deploy.sh --skip-sha
+# 延长就绪等待（默认 600 秒）：HEALTH_TIMEOUT=900 ./deploy/offline-deploy.sh
 ```
 
-`offline-deploy.sh` 会：加载 `offline/images/*.tar` 全部镜像 → 若 `.env` 不存在则从 `.env.example`
-生成并随机填充密钥/管理员密码（会打印一次，请立即记录）→ 校验模型文件 → `docker compose up -d --no-build`
-→ 等待 `/api/health` 就绪并打印访问地址。目标机仍需预装 Docker/Compose，GPU 机需 nvidia-container-toolkit。
+`offline-deploy.sh` 依次执行：
+1. 检查 Docker/Compose、NVIDIA runtime 与 GPU 数量（无 GPU 直接报错，离线包仅支持 GPU 部署）；
+2. 生成 `.env` 并随机填充密钥与管理员密码（密码只写入 `.env`，不打印到终端）；已有 `.env` 中残留
+   `change-this` 默认值时：全新安装自动替换，数据库已初始化且 `POSTGRES_PASSWORD` 为默认值则报错停止；
+3. 按 GPU 数量分配显卡：双卡及以上用默认分工（见第 3 节），单卡时自动把 `EMBED_GPU`/`LLM_GPU` 设为 0；
+4. 检查网关端口是否被占用；
+5. 所需镜像已存在则跳过加载，否则 `docker load` 后逐个核对 `docker-compose.yml` 引用的镜像，缺哪个报哪个；
+6. 检查模型文件并按 `offline/manifests/models.sha256` 校验 SHA256；
+7. `docker compose up -d --no-build`，轮询 `/api/health/dependencies`，全部依赖为 ok 才算成功，超时则打印各依赖状态。
+
+目标机需预装 Docker/Compose 与 nvidia-container-toolkit。网关监听地址由 `.env` 的 `GATEWAY_BIND` 控制（默认 `0.0.0.0`），
+网关为 HTTP，跨不可信网络访问请在前面加 TLS 反向代理。
 
 ## 1. 环境要求与实测结果
 
@@ -105,6 +117,9 @@ cd knowledge
 |------|------|------|
 | GPU 0 | kb-embedding + kb-reranker | bge-m3 与 reranker 各占约 3GB 显存 |
 | GPU 1 | kb-llm | Qwen3-8B Q4_K_M（约 5GB + KV cache），llama.cpp `-ngl 99` |
+
+显卡编号由 `.env` 的 `EMBED_GPU`（embedding + reranker）与 `LLM_GPU`（llm）控制，默认 0 和 1。
+单卡机器两项都设为 0，需显存 ≥ 16GB。
 
 Tesla P4 为 Pascal 架构（sm_61）：
 - PyTorch 使用 **cu124** 轮子（cu128 起不再支持 Pascal）

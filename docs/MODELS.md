@@ -86,7 +86,7 @@ curl -L https://hf-mirror.com/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gg
 
 ## 完整性校验
 
-本仓库附带 SHA256 清单 `offline/manifests/models.sha256`（路径为部署机绝对路径，校验前按需修改为相对/本机路径）：
+本仓库附带 SHA256 清单 `offline/manifests/models.sha256`（路径相对项目根目录，任意部署目录均可直接校验）：
 
 ```bash
 ./deploy/check-models.sh          # 等价于 sha256sum -c offline/manifests/models.sha256

@@ -11,9 +11,11 @@ echo "启动服务..."
 docker compose up -d
 
 echo "等待健康检查..."
+PORT=$(grep -E '^GATEWAY_PORT=' .env | tail -n1 | cut -d= -f2)
+PORT=${PORT:-8080}
 for i in $(seq 1 60); do
-    if curl -sf "http://127.0.0.1:$(grep -E '^GATEWAY_PORT=' .env | cut -d= -f2 || echo 8080)/api/health" >/dev/null 2>&1; then
-        echo "服务已启动: http://$(hostname -I | awk '{print $1}'):$(grep -E '^GATEWAY_PORT=' .env | cut -d= -f2)"
+    if curl -sf "http://127.0.0.1:${PORT}/api/health" >/dev/null 2>&1; then
+        echo "服务已启动: http://$(hostname -I | awk '{print $1}'):${PORT}"
         ./deploy/status.sh
         exit 0
     fi
