@@ -100,7 +100,14 @@ def update_knowledge_base(
 ):
     require_scope(principal, "kb:admin")
     kb = get_authorized_knowledge_bases(principal, [kb_id], db)[0]
-    for field, value in req.model_dump(exclude_unset=True).items():
+    data = req.model_dump(exclude_unset=True)
+    size = data.get("chunk_size") or kb.chunk_size
+    overlap = data.get("chunk_overlap") if data.get("chunk_overlap") is not None else kb.chunk_overlap
+    if overlap >= size:
+        raise HTTPException(422, "chunk_overlap 必须小于 chunk_size")
+    for field, value in data.items():
+        if value is None and field in ("name", "chunk_size", "chunk_overlap"):
+            continue  # 这些字段不可置空
         setattr(kb, field, value)
     db.commit()
     db.refresh(kb)
@@ -155,15 +162,23 @@ def set_members(
 
 
 def _delete_kb(db: Session, kb: KnowledgeBase) -> None:
-    """删除知识库：向量集合 + 全部文档（含文件）+ 记录本身。调用方负责 commit。"""
-    from app.services.document_service import delete_document
+    """删除知识库：先在一个事务里删除数据库记录，提交成功后再删向量集合与文件。"""
+    from app.services.document_service import remove_document_artifacts
 
-    collection_manager.delete_collection(kb.id)
-    for doc in list(kb.documents):
-        delete_document(db, doc)
-    db.query(KnowledgeBaseMember).filter(KnowledgeBaseMember.knowledge_base_id == kb.id).delete()
-    kb.status = "deleted"
-    db.delete(kb)
+    kb_id = kb.id
+    artifacts = [(d.id, d.file_path) for d in kb.documents]
+    try:
+        for doc in list(kb.documents):
+            db.delete(doc)
+        db.query(KnowledgeBaseMember).filter(KnowledgeBaseMember.knowledge_base_id == kb_id).delete()
+        db.delete(kb)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    collection_manager.delete_collection(kb_id)
+    for doc_id, file_path in artifacts:
+        remove_document_artifacts(None, doc_id, file_path)
 
 
 @router.delete("/{kb_id}")
@@ -173,7 +188,6 @@ def delete_knowledge_base(
     require_scope(principal, "kb:admin")
     kb = get_authorized_knowledge_bases(principal, [kb_id], db)[0]
     _delete_kb(db, kb)
-    db.commit()
     return {"success": True}
 
 
@@ -192,7 +206,6 @@ def batch_delete_knowledge_bases(
             continue
         try:
             _delete_kb(db, kb)
-            db.commit()
             results.append({"id": str(kb.id), "name": kb.name, "ok": True})
         except Exception as exc:  # 单个失败不影响其余
             db.rollback()

@@ -15,6 +15,22 @@ def _split_by(text: str, sep: str) -> list[str]:
     return [p + sep for p in parts[:-1] if p] + ([parts[-1]] if parts[-1] else [])
 
 
+def _split_oversized(piece: str, chunk_size: int, level: int = 0) -> list[str]:
+    """超长片段依次按句末标点、空格切分，最后才按字符硬切。"""
+    for i in range(level, len(SEPARATORS)):
+        sep = SEPARATORS[i]
+        if sep in ("\n\n", "\n"):
+            continue  # 段落与换行已在上层处理
+        parts = _split_by(piece, sep)
+        if len(parts) <= 1 and sep != "":
+            continue
+        out: list[str] = []
+        for p in parts:
+            out.extend(_split_oversized(p, chunk_size, i + 1) if len(p) > chunk_size else [p])
+        return out
+    return [piece]
+
+
 def _merge_pieces(pieces: list[str], chunk_size: int, overlap: int) -> list[str]:
     chunks: list[str] = []
     buf = ""
@@ -22,8 +38,12 @@ def _merge_pieces(pieces: list[str], chunk_size: int, overlap: int) -> list[str]
         if len(piece) > chunk_size:
             if buf:
                 chunks.append(buf)
-                buf = ""
-            chunks.extend(_merge_pieces(_split_by(piece, ""), chunk_size, overlap))
+                buf = buf[-overlap:] if overlap else ""
+            for small in _split_oversized(piece, chunk_size):
+                if buf and len(buf) + len(small) > chunk_size:
+                    chunks.append(buf)
+                    buf = buf[-overlap:] if overlap else ""
+                buf += small
             continue
         if buf and len(buf) + len(piece) > chunk_size:
             chunks.append(buf)
@@ -35,6 +55,8 @@ def _merge_pieces(pieces: list[str], chunk_size: int, overlap: int) -> list[str]
 
 
 def chunk_text(text: str, chunk_size: int = 800, overlap: int = 120) -> list[str]:
+    # 重叠必须小于切片长度，否则会无限重复同一段内容（兼容历史上的错误配置）
+    overlap = max(0, min(overlap, chunk_size // 2))
     text = re.sub(r"[ \t]+", " ", text)
     pieces: list[str] = []
     for para in _split_by(text, "\n\n"):

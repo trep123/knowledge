@@ -54,13 +54,39 @@ def delete_collection(kb_id: uuid.UUID) -> None:
         client.delete_collection(name)
 
 
-def delete_document_points(kb_id: uuid.UUID, document_id: uuid.UUID) -> None:
+def delete_document_points(
+    kb_id: uuid.UUID, document_id: uuid.UUID, keep_version: int | None = None
+) -> None:
+    """删除文档的向量点；指定 keep_version 时只删除其他版本（重处理时清理旧版本）。"""
     from qdrant_client.models import FieldCondition, Filter, MatchValue
 
     client = get_qdrant()
     name = collection_name(kb_id)
-    if client.collection_exists(name):
-        client.delete(
-            collection_name=name,
-            points_selector=Filter(must=[FieldCondition(key="document_id", match=MatchValue(value=str(document_id)))]),
-        )
+    if not client.collection_exists(name):
+        return
+    must = [FieldCondition(key="document_id", match=MatchValue(value=str(document_id)))]
+    must_not = (
+        [FieldCondition(key="document_version", match=MatchValue(value=keep_version))]
+        if keep_version is not None
+        else None
+    )
+    client.delete(collection_name=name, points_selector=Filter(must=must, must_not=must_not))
+
+
+def delete_document_version_points(kb_id: uuid.UUID, document_id: uuid.UUID, version: int) -> None:
+    """删除文档某一版本的向量点（清理同版本失败重试留下的残留）。"""
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+    client = get_qdrant()
+    name = collection_name(kb_id)
+    if not client.collection_exists(name):
+        return
+    client.delete(
+        collection_name=name,
+        points_selector=Filter(
+            must=[
+                FieldCondition(key="document_id", match=MatchValue(value=str(document_id))),
+                FieldCondition(key="document_version", match=MatchValue(value=version)),
+            ]
+        ),
+    )
